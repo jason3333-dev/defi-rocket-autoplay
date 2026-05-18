@@ -1,0 +1,17 @@
+node_modules/
+browser-profile/
+browser-profile-*/
+captures/
+resources/
+templates/
+npm-debug.log*
+.env
+.env.*
+!.env.example
+*.log
+*.key
+*.pem
+*.p12
+*.pfx
+*.session
+local_config*

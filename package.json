@@ -1,0 +1,17 @@
+{
+  "name": "defi-rocket-autoplay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "node scripts/prepare.js",
+    "inspect": "node scripts/inspect.js",
+    "calibrate": "node scripts/calibrate.js",
+    "autoplay": "node scripts/autoplay.js",
+    "check": "node --check scripts/prepare.js && node --check scripts/inspect.js && node --check scripts/calibrate.js && node --check scripts/autoplay.js"
+  },
+  "dependencies": {
+    "playwright-core": "^1.57.0",
+    "pngjs": "^7.0.0"
+  }
+}

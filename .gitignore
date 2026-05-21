@@ -5,6 +5,7 @@ captures/
 resources/
 templates/
 npm-debug.log*
+.codex-temp/
 .env
 .env.*
 !.env.example

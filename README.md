@@ -63,9 +63,9 @@ Templates are saved here:
 npm run autoplay -- --max 200
 ```
 
-The script opens the same dedicated Chrome profile and runs in manual-watch mode by default. You manually press **UP** or **DOWN** to start, manually press **CLOSE** to end, and the bot only clicks safe `Tap ...` targets until it reaches `--max`.
+The script opens the same dedicated Chrome profile and runs in manual-watch mode by default. You manually press **UP** or **DOWN** to start, manually press **CLOSE** to end, and the bot keeps trying safe `Tap ...` targets without a click limit.
 
-An overlay is shown in the browser with `0/200` style click counting, elapsed seconds, and a play counter. A new play is counted when a new active round is detected. When you press **CLOSE**, the overlay resets clicks/time/status while keeping the play count. The browser is not closed automatically.
+An overlay is shown in the browser with an increasing click counter, elapsed seconds, current side (`UP`, `DOWN`, or `-`), and a play counter. A new play is counted when a new active round is detected. Press **Z** for long/UP, **X** for short/DOWN, and **C** or **Space** to click the large **CLOSE** button. These hotkeys work on the start screen and on the end modal when UP/DOWN is shown there. The overlay shows `Modal Z/X ready` when the end modal can start the next play immediately. When you close, the overlay resets clicks/time/status/side while keeping the play count. The browser is not closed automatically.
 
 Profit close rule: after 30 seconds have elapsed, if the current in-round profit reaches `+100%` or more, the bot clicks the large **CLOSE** button automatically.
 
@@ -79,7 +79,9 @@ Useful options:
 npm run autoplay -- --max 200 --threshold 0.86 --interval 120
 npm run autoplay -- --max 200 --dry-run
 npm run autoplay -- --max 200 --interval 25 --burst 12 --click-delay 0 --recent-ms 150
+npm run autoplay -- --max 200 --fast-dom --interval 12 --burst 40 --click-delay 0 --recent-ms 80
 npm run autoplay -- --max 200 --auto-close-after 30 --auto-close-profit 100
+npm run autoplay -- --max 200 --manual-limit
 npm run autoplay -- --repeat --max 200 --target-text "tap coin" --avoid-text "tap bomb"
 npm run autoplay -- --repeat --max 200 --interval 40 --burst 6 --click-delay 10
 npm run autoplay -- --repeat --max 200 --image-fallback
@@ -87,9 +89,9 @@ npm run autoplay -- --repeat --max 200 --image-fallback
 
 Use `--image-fallback` only if the site stops exposing `Tap ...` labels. Image matching is less reliable for rotating or resizing objects.
 
-If objects pass by too quickly, lower `--interval`, raise `--burst`, or lower `--click-delay`.
+If many objects appear at once, lower `--interval`, raise `--burst`, or lower `--recent-ms`. Use `--fast-dom` only as an experimental mode; the default path keeps coordinate clicks so the click area behaves like the visible game object.
 
-In manual-watch mode, leave the bot running and start/end each play yourself with **UP/DOWN** and **CLOSE**. The bot resets the click counter to `0/200` and starts elapsed seconds whenever a new active round appears.
+In manual-watch mode, leave the bot running and start/end each play yourself with **Z** long/UP, **X** short/DOWN, and **C** or **Space** close. The bot resets the click counter to `0` and starts elapsed seconds whenever a new active round appears. Add `--manual-limit` only if you want manual mode to stop at `--max`.
 
 Automatic mode is still available if needed:
 

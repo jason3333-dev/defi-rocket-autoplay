@@ -1,124 +1,200 @@
 # Defi Rocket Autoplay
 
-`https://app.defi.app/rocket` trial/test play helper.
+A Windows-friendly helper for the `https://app.defi.app/rocket` trial game.
 
-This tool does not read wallet keys, API keys, secrets, or browser storage files directly. It opens a dedicated Chrome profile and clicks only image templates that you calibrate yourself.
+It watches the Rocket game page, clicks safe `Tap ...` objects, avoids hazard labels such as `Tap skull` and `Tap bomb`, and gives you manual hotkeys for starting and closing rounds.
 
-## Setup
+This project is intended for trial/test flows you are allowed to automate. It does not read wallet keys, API keys, secrets, or browser storage files directly.
+
+## Requirements
+
+- Windows 10/11
+- Node.js 18 or newer
+- Chrome or Edge installed
+- A normal browser session where you can manually log in if the site requires it
+
+## Install
 
 ```powershell
 cd C:\TOYS\defi-rocket-autoplay
 npm install
+npm run check
 ```
 
-## 1. Inspect and capture
+## Quick Start
+
+Double-click:
+
+```text
+run-autoplay-200.cmd
+```
+
+Or run from PowerShell:
+
+```powershell
+npm run autoplay -- --max 200 --interval 25 --burst 12 --click-delay 0 --recent-ms 150
+```
+
+The browser opens with a dedicated local profile. Log in manually if needed, move to the Rocket screen, then use the hotkeys below.
+
+## Controls
+
+| Key | Action |
+| --- | --- |
+| `Z` | Start long / UP |
+| `X` | Start short / DOWN |
+| `C` | Close the current position |
+| `Space` | Close the current position |
+
+The hotkeys work on the start screen and on the end modal when `UP` / `DOWN` is visible.
+
+## Overlay
+
+The in-page overlay shows:
+
+- `Clicks`: total safe objects clicked in the current play
+- `Plays`: active-round count
+- `Elapsed`: seconds since the current play started
+- `Side`: `UP`, `DOWN`, or `-`
+- `Status`: current bot state, such as `Active`, `Ready Z/X`, or `Modal Z/X ready`
+
+When you close a round, clicks, elapsed time, status, and side reset. The play count stays.
+
+## Default Behavior
+
+- Manual mode is the default.
+- The bot does not press `UP` / `DOWN` unless you use `Z` / `X`.
+- The bot does not close the browser automatically.
+- Safe objects are detected from page labels like `Tap ...`.
+- Hazard labels are excluded: `Tap bomb`, `Tap skull`, `Tap avoid`, `Tap hazard`, `skull`, `bomb`.
+- Manual mode keeps counting and clicking beyond `--max` unless `--manual-limit` is used.
+- After 30 seconds, if the in-round profit reaches `+100%` or more, the bot clicks the large `CLOSE` button automatically.
+
+## Useful Commands
+
+Run the stable manual mode:
+
+```powershell
+npm run autoplay -- --max 200 --interval 25 --burst 12 --click-delay 0 --recent-ms 150
+```
+
+Stop manual mode at `--max`:
+
+```powershell
+npm run autoplay -- --max 200 --manual-limit
+```
+
+Change the profit-close rule:
+
+```powershell
+npm run autoplay -- --max 200 --auto-close-after 30 --auto-close-profit 100
+```
+
+Disable profit auto-close:
+
+```powershell
+npm run autoplay -- --max 200 --no-auto-close-profit
+```
+
+Dry run without actual clicks:
+
+```powershell
+npm run autoplay -- --max 200 --dry-run
+```
+
+Experimental fast DOM batch mode:
+
+```powershell
+npm run autoplay -- --max 200 --fast-dom --interval 12 --burst 40 --click-delay 0 --recent-ms 80
+```
+
+Use `--fast-dom` only if many objects appear at once and the stable mode misses too many. The stable mode keeps coordinate clicks so the click area behaves like the visible game object.
+
+## Optional Image Fallback
+
+The default mode uses DOM labels and usually does not need image calibration.
+
+If the site stops exposing `Tap ...` labels, prepare image templates:
+
+```powershell
+run-prepare.cmd
+npm run calibrate
+```
+
+Template folders:
+
+- Rocks: `templates\rocks`
+- Avoid/skulls: `templates\avoid`
+
+Then run:
+
+```powershell
+npm run autoplay -- --max 200 --image-fallback
+```
+
+Image matching is less reliable for rotating, scaling, or shape-changing objects. Prefer the default DOM mode when available.
+
+## Inspect Tools
+
+Capture the current game page:
 
 ```powershell
 npm run inspect
 ```
 
-Chrome opens with a dedicated profile in `browser-profile`. Log in manually if needed, start the trial game, and return to the terminal. The script saves a screenshot under `captures`.
+Double-click alternatives:
 
-Double-click alternative: `run-inspect.cmd`
-
-The double-click launcher adds a small **Capture for bot** button inside the opened browser page. Move to the game screen and click that page button; no terminal input is needed.
-
-Useful options:
-
-```powershell
-npm run inspect -- --click-to-capture
-npm run inspect -- --manual
-npm run inspect -- --wait 30000
-npm run inspect -- --url https://app.defi.app/rocket
+```text
+run-inspect.cmd
+run-inspect-edge.cmd
+run-calibrate.cmd
 ```
 
-One-click prep:
+## Local Files
 
-```powershell
-run-prepare.cmd
-```
+These folders are intentionally ignored by Git:
 
-This opens the game capture flow first. After you click **Capture for bot**, the same browser tab moves to a resource picker. Choose **Rock** for stone images and **Avoid** for skull images. Use the manual crop fallback only if the object is missing from the resource list.
+- `node_modules`
+- `browser-profile*`
+- `captures`
+- `resources`
+- `templates`
+- `.env*`
+- `*.key`, `*.pem`, `*.session`
+- `local_config*`
 
-## 2. Calibrate rock and skull templates
+Do not publish browser profiles, screenshots, templates, session files, API keys, or local config files.
 
-```powershell
-npm run calibrate
-```
+## Troubleshooting
 
-Open the printed local URL. The default screen lets you choose from extracted image resources. Click **Rock** for stone images and **Avoid** for skull images. Add 2-3 examples if the game uses different sizes or angles.
+If hotkeys do not work:
 
-Double-click alternative: `run-calibrate.cmd`
+- Click once inside the game page, then press the key again.
+- Restart `run-autoplay-200.cmd` after code updates.
+- Refresh the game tab if an older injected hotkey script is still active.
 
-The calibration page now opens automatically in your browser.
+If objects are missed:
 
-Templates are saved here:
+- Try lowering `--interval`.
+- Try raising `--burst`.
+- Keep `--click-delay 0`.
+- Use `--fast-dom` only as an experiment.
 
-- Rocks: `templates\rocks`
-- Avoid/skulls: `templates\avoid`
+If close does not work:
 
-## 3. Autoplay
+- Try both `C` and `Space`.
+- Make sure the large `CLOSE` button is visible.
+- Restart the bot if the page was open before the latest hotkey changes.
 
-```powershell
-npm run autoplay -- --max 200
-```
+If the browser profile behaves strangely:
 
-The script opens the same dedicated Chrome profile and runs in manual-watch mode by default. You manually press **UP** or **DOWN** to start, manually press **CLOSE** to end, and the bot keeps trying safe `Tap ...` targets without a click limit.
-
-An overlay is shown in the browser with an increasing click counter, elapsed seconds, current side (`UP`, `DOWN`, or `-`), and a play counter. A new play is counted when a new active round is detected. Press **Z** for long/UP, **X** for short/DOWN, and **C** or **Space** to click the large **CLOSE** button. These hotkeys work on the start screen and on the end modal when UP/DOWN is shown there. The overlay shows `Modal Z/X ready` when the end modal can start the next play immediately. When you close, the overlay resets clicks/time/status/side while keeping the play count. The browser is not closed automatically.
-
-Profit close rule: after 30 seconds have elapsed, if the current in-round profit reaches `+100%` or more, the bot clicks the large **CLOSE** button automatically.
-
-Current default click mode is DOM-only: the game exposes clickable objects as labels like `Tap ...`. The bot clicks every safe `Tap ...` target and excludes bad labels like `Tap bomb`, `Tap skull`, `Tap avoid`, and `Tap hazard`. This keeps unique shapes from being skipped when the object rotates, scales, or changes shape.
-
-Double-click alternative: `run-autoplay-200.cmd`
-
-Useful options:
-
-```powershell
-npm run autoplay -- --max 200 --threshold 0.86 --interval 120
-npm run autoplay -- --max 200 --dry-run
-npm run autoplay -- --max 200 --interval 25 --burst 12 --click-delay 0 --recent-ms 150
-npm run autoplay -- --max 200 --fast-dom --interval 12 --burst 40 --click-delay 0 --recent-ms 80
-npm run autoplay -- --max 200 --auto-close-after 30 --auto-close-profit 100
-npm run autoplay -- --max 200 --manual-limit
-npm run autoplay -- --repeat --max 200 --target-text "tap coin" --avoid-text "tap bomb"
-npm run autoplay -- --repeat --max 200 --interval 40 --burst 6 --click-delay 10
-npm run autoplay -- --repeat --max 200 --image-fallback
-```
-
-Use `--image-fallback` only if the site stops exposing `Tap ...` labels. Image matching is less reliable for rotating or resizing objects.
-
-If many objects appear at once, lower `--interval`, raise `--burst`, or lower `--recent-ms`. Use `--fast-dom` only as an experimental mode; the default path keeps coordinate clicks so the click area behaves like the visible game object.
-
-In manual-watch mode, leave the bot running and start/end each play yourself with **Z** long/UP, **X** short/DOWN, and **C** or **Space** close. The bot resets the click counter to `0` and starts elapsed seconds whenever a new active round appears. Add `--manual-limit` only if you want manual mode to stop at `--max`.
-
-Automatic mode is still available if needed:
-
-```powershell
-npm run autoplay -- --auto --auto-start --close-on-max --rounds 5 --max 200
-```
-
-Between rounds, the script tries to click visible controls whose text includes `Play again`, `Retry`, `Restart`, `Start`, `Continue`, `Next`, `OK`, or `Close`.
-
-If the restart button is graphical or not detected, pass its screen coordinate:
-
-```powershell
-npm run autoplay -- --rounds 5 --max 200 --restart-x 640 --restart-y 760
-```
-
-You can also add custom button text:
-
-```powershell
-npm run autoplay -- --rounds 5 --restart-text "Play Now"
-```
-
-Double-click continuous mode: `run-autoplay-repeat.cmd`
-
-If it clicks too loosely, raise `--threshold` to `0.90`. If it misses rocks, lower it to `0.82` or add more templates.
+- Stop the bot.
+- Close the browser it opened.
+- Start `run-autoplay-200.cmd` again.
 
 ## Safety Notes
 
-- Use only on trial/test flows you are allowed to automate.
+- Use only on trial/test game flows where automation is allowed.
 - The script does not bypass captchas, wallet prompts, rate limits, or access controls.
-- Keep `templates`, `captures`, and `browser-profile` local. Do not publish them.
+- Review the code before running it with any account that has real funds.
+- Keep sensitive local files out of Git. The `.gitignore` is set up for that, but you are still responsible for what you add.

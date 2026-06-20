@@ -3,13 +3,15 @@ import http from 'node:http';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { PNG } from 'pngjs';
-import { asNumber, browserPath, ensureDir, parseArgs, projectRoot, stamp } from './common.js';
+import { asNumber, ensureDir, openBrowserPage, parseArgs, projectRoot, stamp } from './common.js';
 
 const args = parseArgs();
 const url = String(args.url ?? 'https://app.defi.app/rocket');
 const browserName = String(args.browser ?? process.env.ROCKET_BROWSER ?? 'chrome').toLowerCase();
 const port = asNumber(args.port, 8792);
-const profileDir = path.join(projectRoot, browserName.includes('edge') ? 'browser-profile-edge' : 'browser-profile-chrome');
+const dedicatedProfileDir = path.join(projectRoot, browserName.includes('edge') ? 'browser-profile-edge' : 'browser-profile-chrome');
+const profileDir = path.resolve(String(args['profile-dir'] ?? dedicatedProfileDir));
+const profileDirectory = args['profile-directory'] ? String(args['profile-directory']) : 'Default';
 const capturesDir = path.join(projectRoot, 'captures');
 const resourcesRoot = path.join(projectRoot, 'resources');
 const rockDir = path.join(projectRoot, 'templates', 'rocks');
@@ -21,17 +23,14 @@ ensureDir(resourcesRoot);
 ensureDir(rockDir);
 ensureDir(avoidDir);
 
-const context = await chromium.launchPersistentContext(profileDir, {
-  executablePath: browserPath(browserName),
-  headless: false,
-  viewport: { width: 1280, height: 900 },
-  deviceScaleFactor: 1,
-  args: ['--disable-blink-features=AutomationControlled']
+const { context, page } = await openBrowserPage(chromium, {
+  args,
+  browserName,
+  url,
+  profileDir,
+  profileDirectory
 });
 
-const page = context.pages()[0] ?? await context.newPage();
-await page.goto(url, { waitUntil: 'domcontentloaded' });
-console.log(`Opened ${url}`);
 console.log('Move to the game screen, then click "Capture for bot" in the browser.');
 
 await waitForPageCaptureClick(page);

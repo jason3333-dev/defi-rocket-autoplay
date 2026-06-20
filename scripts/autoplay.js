@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { PNG } from 'pngjs';
-import { asNumber, browserPath, ensureDir, parseArgs, projectRoot } from './common.js';
+import { asNumber, ensureDir, openBrowserPage, parseArgs, projectRoot } from './common.js';
 
 const args = parseArgs();
 const url = String(args.url ?? 'https://app.defi.app/rocket');
@@ -60,7 +60,9 @@ const restartTexts = String(args['restart-text'] ?? '')
   .map((text) => text.trim().toLowerCase())
   .filter(Boolean);
 
-const profileDir = path.join(projectRoot, browserName.includes('edge') ? 'browser-profile-edge' : 'browser-profile-chrome');
+const dedicatedProfileDir = path.join(projectRoot, browserName.includes('edge') ? 'browser-profile-edge' : 'browser-profile-chrome');
+const profileDir = path.resolve(String(args['profile-dir'] ?? dedicatedProfileDir));
+const profileDirectory = args['profile-directory'] ? String(args['profile-directory']) : 'Default';
 const rockDir = path.join(projectRoot, 'templates', 'rocks');
 const avoidDir = path.join(projectRoot, 'templates', 'avoid');
 
@@ -294,7 +296,8 @@ async function updateOverlay(page, { clicks, plays, status, elapsedSec = 0, side
 }
 
 async function installManualHotkeys(page) {
-  await page.evaluate(({ restartTexts: customRestartTexts, hotkeyVersion }) => {
+  const payload = { restartTexts, hotkeyVersion: 'single-start-v4' };
+  await Promise.all(page.frames().map((frame) => frame.evaluate(({ restartTexts: customRestartTexts, hotkeyVersion }) => {
     if (window.__rocket_bot_manual_hotkeys_version === hotkeyVersion) {
       return;
     }
@@ -537,32 +540,40 @@ async function installManualHotkeys(page) {
       clickControl(closeButton);
       setStatus(event.code === 'KeyC' || event.key?.toLowerCase() === 'c' ? 'C CLOSE' : 'Space CLOSE');
     }, { capture: true, signal: window.__rocket_bot_manual_hotkeys_abort.signal });
-  }, { restartTexts, hotkeyVersion: 'single-start-v3' });
+  }, payload).catch(() => false)));
 }
 
 async function takeManualCloseRequest(page) {
-  return page.evaluate(() => {
-    if (!window.__rocket_bot_close_requested) {
-      return false;
-    }
-    const requestedAt = window.__rocket_bot_close_requested;
-    window.__rocket_bot_close_requested = 0;
-    return requestedAt;
-  }).catch(() => false);
+  for (const frame of page.frames()) {
+    const requestedAt = await frame.evaluate(() => {
+      if (!window.__rocket_bot_close_requested) {
+        return false;
+      }
+      const value = window.__rocket_bot_close_requested;
+      window.__rocket_bot_close_requested = 0;
+      return value;
+    }).catch(() => false);
+    if (requestedAt) return requestedAt;
+  }
+  return false;
 }
 
 async function takeManualStartRequest(page) {
-  return page.evaluate(() => {
-    const request = window.__rocket_bot_start_requested;
-    if (!request?.side) {
-      return null;
-    }
-    window.__rocket_bot_start_requested = null;
-    return {
-      side: request.side,
-      at: request.at || Date.now()
-    };
-  }).catch(() => null);
+  for (const frame of page.frames()) {
+    const request = await frame.evaluate(() => {
+      const value = window.__rocket_bot_start_requested;
+      if (!value?.side) {
+        return null;
+      }
+      window.__rocket_bot_start_requested = null;
+      return {
+        side: value.side,
+        at: value.at || Date.now()
+      };
+    }).catch(() => null);
+    if (request?.side) return request;
+  }
+  return null;
 }
 
 async function directionClickRecentlyStarted(page) {
@@ -721,89 +732,110 @@ async function isRoundActive(page) {
 }
 
 async function clickClosePosition(page) {
-  const result = await page.evaluate(() => {
-    const normalize = (value) => (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-    const readText = (el) => normalize(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || el.getAttribute('title'));
-    const wholeWord = (value, word) => new RegExp(`(^|[^a-z])${word}([^a-z]|$)`).test(value);
-    const visible = (el) => {
-      const style = window.getComputedStyle(el);
-      const rect = el.getBoundingClientRect();
-      return style.visibility !== 'hidden' &&
-        style.display !== 'none' &&
-        Number(style.opacity) !== 0 &&
-        rect.width >= 8 &&
-        rect.height >= 8;
-    };
+  for (const frame of page.frames()) {
+    const result = await frame.evaluate((shouldClick) => {
+      const normalize = (value) => (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const readText = (el) => normalize(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || el.getAttribute('title'));
+      const wholeWord = (value, word) => new RegExp(`(^|[^a-z])${word}([^a-z]|$)`).test(value);
+      const visible = (el) => {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return style.visibility !== 'hidden' &&
+          style.display !== 'none' &&
+          Number(style.opacity) !== 0 &&
+          rect.width >= 8 &&
+          rect.height >= 8;
+      };
+      const clickControl = (control) => {
+        const rect = control.el.getBoundingClientRect();
+        const x = rect.x + rect.width / 2;
+        const y = rect.y + rect.height / 2;
+        const target = document.elementFromPoint(x, y) || control.el;
+        const eventOptions = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+        try {
+          target.dispatchEvent(new PointerEvent('pointerdown', { ...eventOptions, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+          target.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+          target.dispatchEvent(new PointerEvent('pointerup', { ...eventOptions, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+          target.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+          target.dispatchEvent(new MouseEvent('click', eventOptions));
+        } catch {
+          target.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+          target.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+          target.dispatchEvent(new MouseEvent('click', eventOptions));
+        }
+        control.el.click();
+      };
 
-    const selector = 'button,[role="button"],a,input[type="button"],input[type="submit"],[tabindex],[onclick]';
-    const seen = new Set();
-    const controls = [];
-    const add = (el, sourceText = '') => {
-      const clickEl = el.closest(selector) || el;
-      if (seen.has(clickEl) || !visible(clickEl)) return;
-      const rect = clickEl.getBoundingClientRect();
-      const text = [readText(clickEl), sourceText].filter(Boolean).join(' ').trim();
-      if (!text) return;
-      seen.add(clickEl);
-      controls.push({
-        el: clickEl,
-        text,
-        x: Math.round(rect.x + rect.width / 2),
-        y: Math.round(rect.y + rect.height / 2),
-        width: Math.round(rect.width),
-        height: Math.round(rect.height)
-      });
-    };
+      const selector = 'button,[role="button"],a,input[type="button"],input[type="submit"],[tabindex],[onclick]';
+      const seen = new Set();
+      const controls = [];
+      const add = (el, sourceText = '') => {
+        const clickEl = el.closest(selector) || el;
+        if (seen.has(clickEl) || !visible(clickEl)) return;
+        const rect = clickEl.getBoundingClientRect();
+        const text = [readText(clickEl), sourceText].filter(Boolean).join(' ').trim();
+        if (!text) return;
+        seen.add(clickEl);
+        controls.push({
+          el: clickEl,
+          text,
+          x: Math.round(rect.x + rect.width / 2),
+          y: Math.round(rect.y + rect.height / 2),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        });
+      };
 
-    for (const el of [...document.querySelectorAll(selector)]) {
-      add(el);
-    }
-    for (const el of [...document.querySelectorAll('body *')]) {
-      if (!visible(el)) continue;
-      const text = readText(el);
-      if (!text || text.length > 100) continue;
-      if (wholeWord(text, 'close') || text.includes('close position') || text.includes('close trade')) {
-        add(el, text);
+      for (const el of [...document.querySelectorAll(selector)]) {
+        add(el);
       }
+      for (const el of [...document.querySelectorAll('body *')]) {
+        if (!visible(el)) continue;
+        const text = readText(el);
+        if (!text || text.length > 100) continue;
+        if (wholeWord(text, 'close') || text.includes('close position') || text.includes('close trade')) {
+          add(el, text);
+        }
+      }
+
+      const closeButton = controls
+        .filter((control) =>
+          (control.text === 'close' || wholeWord(control.text, 'close') || control.text.includes('close position') || control.text.includes('close trade')) &&
+          !control.text.includes('sign') &&
+          !control.text.includes('login') &&
+          control.width >= 40 &&
+          control.height >= 24 &&
+          control.y >= window.innerHeight * 0.12
+        )
+        .map((control) => ({
+          ...control,
+          score:
+            (control.text === 'close' ? 10 : 0) +
+            (wholeWord(control.text, 'close') ? 6 : 0) +
+            (control.width >= 100 && control.height >= 40 ? 2 : 0) -
+            Math.min(control.text.length / 80, 2)
+        }))
+        .sort((a, b) => b.score - a.score)[0];
+
+      if (!closeButton) return { ok: false };
+      if (shouldClick) {
+        clickControl(closeButton);
+      }
+      return {
+        ok: true,
+        text: closeButton.text,
+        x: closeButton.x,
+        y: closeButton.y,
+        width: closeButton.width,
+        height: closeButton.height
+      };
+    }, !dryRun).catch(() => ({ ok: false }));
+
+    if (result.ok) {
+      console.log(`Close: clicked "${result.text}" at x=${result.x} y=${result.y}`);
+      await page.waitForTimeout(closeWaitMs);
+      return true;
     }
-
-    const closeButton = controls
-      .filter((control) =>
-        (control.text === 'close' || wholeWord(control.text, 'close') || control.text.includes('close position') || control.text.includes('close trade')) &&
-        !control.text.includes('sign') &&
-        !control.text.includes('login') &&
-        control.width >= 40 &&
-        control.height >= 24 &&
-        control.y >= window.innerHeight * 0.18
-      )
-      .map((control) => ({
-        ...control,
-        score:
-          (control.text === 'close' ? 10 : 0) +
-          (wholeWord(control.text, 'close') ? 6 : 0) +
-          (control.width >= 100 && control.height >= 40 ? 2 : 0) -
-          Math.min(control.text.length / 80, 2)
-      }))
-      .sort((a, b) => b.score - a.score)[0];
-
-    if (!closeButton) return { ok: false };
-    return {
-      ok: true,
-      text: closeButton.text,
-      x: closeButton.x,
-      y: closeButton.y,
-      width: closeButton.width,
-      height: closeButton.height
-    };
-  });
-
-  if (result.ok) {
-    console.log(`Close: clicked "${result.text}" at x=${result.x} y=${result.y}`);
-    if (!dryRun) {
-      await page.mouse.click(result.x, result.y);
-    }
-    await page.waitForTimeout(closeWaitMs);
-    return true;
   }
 
   console.log('Close: CLOSE button not found.');
@@ -1511,17 +1543,14 @@ if (avoidTemplates.length === 0) {
   console.warn('No avoid/skull templates found. DOM avoid labels are still enabled.');
 }
 
-const browser = await chromium.launchPersistentContext(profileDir, {
-  executablePath: browserPath(browserName),
-  headless: false,
-  viewport: { width: 1280, height: 900 },
-  deviceScaleFactor: 1,
-  args: ['--disable-blink-features=AutomationControlled']
+const { browser, page } = await openBrowserPage(chromium, {
+  args,
+  browserName,
+  url,
+  profileDir,
+  profileDirectory
 });
 
-const page = browser.pages()[0] ?? await browser.newPage();
-await page.goto(url, { waitUntil: 'domcontentloaded' });
-console.log(`Opened ${url}`);
 console.log(`Waiting ${waitMs}ms. Put the trial game into the playable state.`);
 await page.waitForTimeout(waitMs);
 

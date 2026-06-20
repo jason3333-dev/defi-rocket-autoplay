@@ -37,7 +37,7 @@ Or run from PowerShell:
 npm run autoplay -- --max 200 --fast-dom --interval 12 --burst 40 --click-delay 0 --recent-ms 80
 ```
 
-The browser opens with a dedicated local profile. Log in manually if needed, move to the Rocket screen, then use the hotkeys below.
+The browser opens a debugger Chrome window on CDP port `9222` using the local `browser-profile-chrome` profile and opens `https://app.defi.app/rocket` by default. Log in manually if needed, then use the hotkeys below.
 
 ## Controls
 
@@ -96,6 +96,18 @@ Dry run without actual clicks:
 
 ```powershell
 npm run autoplay -- --max 200 --dry-run
+```
+
+Launch without browser extensions:
+
+```powershell
+npm run autoplay -- --max 200 --disable-extensions
+```
+
+Use a different debugger profile directory:
+
+```powershell
+npm run autoplay -- --max 200 --profile-dir C:\TOYS\defi-rocket-autoplay\browser-profile-alt
 ```
 
 Point the bot at a different coin element class if the site renames it:

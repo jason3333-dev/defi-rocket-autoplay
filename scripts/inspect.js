@@ -3,7 +3,7 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { chromium } from 'playwright-core';
-import { asNumber, browserPath, ensureDir, parseArgs, projectRoot, stamp } from './common.js';
+import { asNumber, ensureDir, openBrowserPage, parseArgs, projectRoot, stamp } from './common.js';
 
 const args = parseArgs();
 const url = String(args.url ?? 'https://app.defi.app/rocket');
@@ -11,23 +11,22 @@ const browserName = String(args.browser ?? process.env.ROCKET_BROWSER ?? 'chrome
 const waitMs = asNumber(args.wait, 15000);
 const manual = Boolean(args.manual);
 const clickToCapture = Boolean(args['click-to-capture']);
-const profileDir = path.join(projectRoot, browserName.includes('edge') ? 'browser-profile-edge' : 'browser-profile-chrome');
+const dedicatedProfileDir = path.join(projectRoot, browserName.includes('edge') ? 'browser-profile-edge' : 'browser-profile-chrome');
+const profileDir = path.resolve(String(args['profile-dir'] ?? dedicatedProfileDir));
+const profileDirectory = args['profile-directory'] ? String(args['profile-directory']) : 'Default';
 const capturesDir = path.join(projectRoot, 'captures');
 
 ensureDir(profileDir);
 ensureDir(capturesDir);
 
-const browser = await chromium.launchPersistentContext(profileDir, {
-  executablePath: browserPath(browserName),
-  headless: false,
-  viewport: { width: 1280, height: 900 },
-  deviceScaleFactor: 1,
-  args: ['--disable-blink-features=AutomationControlled']
+const { browser, page } = await openBrowserPage(chromium, {
+  args,
+  browserName,
+  url,
+  profileDir,
+  profileDirectory
 });
 
-const page = browser.pages()[0] ?? await browser.newPage();
-await page.goto(url, { waitUntil: 'domcontentloaded' });
-console.log(`Opened ${url}`);
 if (clickToCapture) {
   await waitForPageCaptureClick(page);
 } else if (manual) {

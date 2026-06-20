@@ -2,7 +2,9 @@
 
 A Windows-friendly helper for the `https://app.defi.app/rocket` trial game.
 
-It watches the Rocket game page, clicks safe `Tap ...` objects, avoids hazard labels such as `Tap skull` and `Tap bomb`, and gives you manual hotkeys for starting and closing rounds.
+The Rocket game is now a directional bet ("Rocket Perps"): you pick `Up` or `Down`, a position opens, and you `CLOSE` to settle. The helper watches the page, gives you manual hotkeys for opening (`Z`/`X`) and closing (`C`/`Space`) a round, and auto-taps the coins/asteroids that float through the play area for bonus XP/score while a round is active. Tapping objects is a separate XP/score mechanic and does not affect the position's profit and loss. The bot never closes the position for you — closing is always manual.
+
+Use the in-game **Demo** mode (top-left `Live` / `Demo` toggle) for testing — it uses a play-money balance, no real funds.
 
 This project is intended for trial/test flows you are allowed to automate. It does not read wallet keys, API keys, secrets, or browser storage files directly.
 
@@ -32,7 +34,7 @@ run-autoplay-200.cmd
 Or run from PowerShell:
 
 ```powershell
-npm run autoplay -- --max 200 --interval 25 --burst 12 --click-delay 0 --recent-ms 150
+npm run autoplay -- --max 200 --fast-dom --interval 12 --burst 40 --click-delay 0 --recent-ms 80
 ```
 
 The browser opens with a dedicated local profile. Log in manually if needed, move to the Rocket screen, then use the hotkeys below.
@@ -41,18 +43,18 @@ The browser opens with a dedicated local profile. Log in manually if needed, mov
 
 | Key | Action |
 | --- | --- |
-| `Z` | Start long / UP |
-| `X` | Start short / DOWN |
+| `Z` | Open `Up` (long) |
+| `X` | Open `Down` (short) |
 | `C` | Close the current position |
 | `Space` | Close the current position |
 
-The hotkeys work on the start screen and on the end modal when `UP` / `DOWN` is visible.
+`Z` / `X` work whenever the `Up` / `Down` buttons are showing (before a round). `C` / `Space` work while a round is active and the `CLOSE` button is showing.
 
 ## Overlay
 
 The in-page overlay shows:
 
-- `Clicks`: total safe objects clicked in the current play
+- `Clicks`: total coins/asteroids tapped in the current play
 - `Plays`: active-round count
 - `Elapsed`: seconds since the current play started
 - `Side`: `UP`, `DOWN`, or `-`
@@ -63,16 +65,22 @@ When you close a round, clicks, elapsed time, status, and side reset. The play c
 ## Default Behavior
 
 - Manual mode is the default.
-- The bot does not press `UP` / `DOWN` unless you use `Z` / `X`.
+- You choose the direction: the bot does not press `Up` / `Down` unless you use `Z` / `X`.
 - The bot does not close the browser automatically.
-- Safe objects are detected from page labels like `Tap ...`.
-- Hazard labels are excluded: `Tap bomb`, `Tap skull`, `Tap avoid`, `Tap hazard`, `skull`, `bomb`.
-- Manual mode keeps counting and clicking beyond `--max` unless `--manual-limit` is used.
-- After 30 seconds, if the in-round profit reaches `+100%` or more, the bot clicks the large `CLOSE` button automatically.
+- While a round is active, the bot auto-taps coins/asteroids. They are detected by their element class (`coinTap...`), not by text, since the new coins have no label. Override with `--coin-class <substring>`; disable tapping with `--coin-class ""`.
+- Only the central play area is tapped, so nav, the `CLOSE` button, the amount controls, and the side panels are never clicked.
+- Manual mode keeps counting and tapping beyond `--max` unless `--manual-limit` is used.
+- The bot never closes the position automatically. Press `C` or `Space` to close.
 
 ## Useful Commands
 
-Run the stable manual mode:
+Default fast mode (what `run-autoplay-200.cmd` runs). Coins drift across the screen, so `--fast-dom` clicks the element in-page instead of by coordinate and lands more taps when several coins appear at once:
+
+```powershell
+npm run autoplay -- --max 200 --fast-dom --interval 12 --burst 40 --click-delay 0 --recent-ms 80
+```
+
+Slower, coordinate-click mode (if fast mode ever misbehaves):
 
 ```powershell
 npm run autoplay -- --max 200 --interval 25 --burst 12 --click-delay 0 --recent-ms 150
@@ -84,37 +92,23 @@ Stop manual mode at `--max`:
 npm run autoplay -- --max 200 --manual-limit
 ```
 
-Change the profit-close rule:
-
-```powershell
-npm run autoplay -- --max 200 --auto-close-after 30 --auto-close-profit 100
-```
-
-Disable profit auto-close:
-
-```powershell
-npm run autoplay -- --max 200 --no-auto-close-profit
-```
-
 Dry run without actual clicks:
 
 ```powershell
 npm run autoplay -- --max 200 --dry-run
 ```
 
-Experimental fast DOM batch mode:
+Point the bot at a different coin element class if the site renames it:
 
 ```powershell
-npm run autoplay -- --max 200 --fast-dom --interval 12 --burst 40 --click-delay 0 --recent-ms 80
+npm run autoplay -- --max 200 --coin-class cointap
 ```
-
-Use `--fast-dom` only if many objects appear at once and the stable mode misses too many. The stable mode keeps coordinate clicks so the click area behaves like the visible game object.
 
 ## Optional Image Fallback
 
-The default mode uses DOM labels and usually does not need image calibration.
+The default mode finds coins by their DOM element class and usually does not need image calibration.
 
-If the site stops exposing `Tap ...` labels, prepare image templates:
+If the site stops exposing coin elements in the DOM (for example, if it moves to a `<canvas>`), prepare image templates:
 
 ```powershell
 run-prepare.cmd
@@ -123,8 +117,8 @@ npm run calibrate
 
 Template folders:
 
-- Rocks: `templates\rocks`
-- Avoid/skulls: `templates\avoid`
+- Coins/rocks: `templates\rocks`
+- Avoid/hazards: `templates\avoid`
 
 Then run:
 

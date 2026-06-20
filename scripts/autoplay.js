@@ -30,22 +30,28 @@ const restartAttempts = Math.max(1, Math.floor(asNumber(args['restart-attempts']
 const restartDelayMs = asNumber(args['restart-delay-ms'], 2500);
 const closeOnMax = Boolean(args['close-on-max']);
 const closeWaitMs = asNumber(args['close-wait-ms'], 1200);
-const autoCloseProfitPct = asNumber(args['auto-close-profit'], 100);
-const autoCloseProfit = !Boolean(args['no-auto-close-profit']);
-const autoCloseAfterSec = asNumber(args['auto-close-after'], 30);
-const profitCheckMs = asNumber(args['profit-check-ms'], 100);
 const restartX = Number(args['restart-x']);
 const restartY = Number(args['restart-y']);
 const hasRestartPoint = Number.isFinite(restartX) && Number.isFinite(restartY);
 const dryRun = Boolean(args['dry-run']);
 const imageFallback = Boolean(args['image-fallback']);
 const targetTextArg = args['target-text'];
-const targetAnyTap = targetTextArg === undefined;
 const targetTexts = String(targetTextArg ?? '')
   .split(',')
   .map((text) => text.trim().toLowerCase())
   .filter(Boolean);
 const avoidTexts = String(args['avoid-text'] ?? 'tap bomb,tap skull,tap avoid,tap hazard,skull,bomb')
+  .split(',')
+  .map((text) => text.trim().toLowerCase())
+  .filter(Boolean);
+// The updated Rocket game renders tappable coins/asteroids as <button> wrappers
+// around an <img> whose (CSS-module) class contains "coinTap". We match on that
+// class substring instead of the old "Tap ..." button text, which no longer exists.
+const coinClassNeedles = String(args['coin-class'] ?? 'cointap')
+  .split(',')
+  .map((text) => text.trim().toLowerCase())
+  .filter(Boolean);
+const avoidClassNeedles = String(args['avoid-class'] ?? '')
   .split(',')
   .map((text) => text.trim().toLowerCase())
   .filter(Boolean);
@@ -591,7 +597,9 @@ async function getManualScreenState(page) {
         rect.height >= 8;
     };
 
-    const selector = 'button,[role="button"],a,input[type="button"],input[type="submit"],[tabindex],[onclick]';
+    // Only interactive controls are scanned (no full `body *` walk) so this stays
+    // cheap even after a long session grows the page's DOM (history rows, etc.).
+    const selector = 'button,[role="button"],a,input[type="button"],input[type="submit"]';
     const controls = [...document.querySelectorAll(selector)]
       .filter(visible)
       .map((el) => {
@@ -604,19 +612,6 @@ async function getManualScreenState(page) {
           y: Math.round(rect.y + rect.height / 2)
         };
       });
-    const textItems = [...document.querySelectorAll('body *')]
-      .filter((el) => !el.id?.startsWith('__rocket_bot_') && visible(el))
-      .map((el) => {
-        const rect = el.getBoundingClientRect();
-        return {
-          text: readText(el),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-          x: Math.round(rect.x + rect.width / 2),
-          y: Math.round(rect.y + rect.height / 2)
-        };
-      })
-      .filter((item) => item.text && item.text.length <= 100);
 
     const sideFromText = (text) => {
       const up = wholeWord(text, 'up') || wholeWord(text, 'long');
@@ -631,11 +626,9 @@ async function getManualScreenState(page) {
       !control.text.includes('connect') &&
       control.width >= 40 &&
       control.height >= 24;
-    const sideCandidate = [
-      ...controls.map((control) => ({ ...control, interactive: true })),
-      ...textItems.map((item) => ({ ...item, interactive: false }))
-    ]
-      .map((item) => ({ ...item, side: sideFromText(item.text) }))
+    // The Up/Down buttons are real controls, so the side comes from them directly.
+    const sideCandidate = controls
+      .map((control) => ({ ...control, side: sideFromText(control.text) }))
       .filter((item) =>
         item.side &&
         !item.text.includes('sign') &&
@@ -650,8 +643,7 @@ async function getManualScreenState(page) {
         ...item,
         score:
           (item.text === 'up' || item.text === 'down' || item.text === 'long' || item.text === 'short' ? 10 : 0) +
-          (item.interactive ? 4 : 0) +
-          (item.text.includes('position') || item.text.includes('direction') || item.text.includes('current') ? 3 : 0) +
+          4 +
           (item.y >= window.innerHeight * 0.35 ? 1 : 0) -
           Math.min(item.text.length / 80, 2)
       }))
@@ -725,63 +717,6 @@ async function isRoundActive(page) {
       control.height >= 24 &&
       control.y >= window.innerHeight * 0.18
     );
-  });
-}
-
-async function detectCurrentProfitPercent(page) {
-  return page.evaluate(() => {
-    const visible = (el) => {
-      const style = window.getComputedStyle(el);
-      const rect = el.getBoundingClientRect();
-      return style.visibility !== 'hidden' &&
-        style.display !== 'none' &&
-        Number(style.opacity) !== 0 &&
-        rect.width >= 8 &&
-        rect.height >= 8;
-    };
-
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1280;
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 900;
-    const candidates = [];
-
-    for (const el of [...document.querySelectorAll('body *')]) {
-      if (el.id?.startsWith('__rocket_bot_')) continue;
-      if (!visible(el)) continue;
-
-      const rect = el.getBoundingClientRect();
-      const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!text || !text.includes('%') || !text.includes('+')) continue;
-
-      // Current in-round PnL is rendered in the central chart area. This avoids
-      // old trade-history percentages in the left panel.
-      const centerX = rect.x + rect.width / 2;
-      const centerY = rect.y + rect.height / 2;
-      const inChartArea = centerX >= viewportWidth * 0.27 &&
-        centerX <= viewportWidth * 0.73 &&
-        centerY >= viewportHeight * 0.16 &&
-        centerY <= viewportHeight * 0.88;
-      if (!inChartArea) continue;
-
-      // Skip broad containers that may include unrelated historical text.
-      if (rect.width > 360 || rect.height > 160) continue;
-
-      for (const match of text.matchAll(/\+\s*(\d+(?:[.,]\d+)?)\s*%/g)) {
-        const pct = Number(match[1].replace(',', '.'));
-        if (Number.isFinite(pct)) {
-          candidates.push({
-            pct,
-            text,
-            x: Math.round(rect.x),
-            y: Math.round(rect.y),
-            width: Math.round(rect.width),
-            height: Math.round(rect.height)
-          });
-        }
-      }
-    }
-
-    candidates.sort((a, b) => b.pct - a.pct);
-    return candidates[0] || null;
   });
 }
 
@@ -1070,7 +1005,7 @@ async function ensureRoundStarted(page) {
 }
 
 async function findDomTargets(page) {
-  return page.evaluate(({ targetAnyTap: anyTap, targetTexts: targetNeedles, avoidTexts: avoidNeedles }) => {
+  return page.evaluate(({ coinNeedles, avoidClassNeedles, targetTexts: targetNeedles, avoidTexts: avoidNeedles }) => {
     const normalize = (value) => (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const visible = (el) => {
       const style = window.getComputedStyle(el);
@@ -1082,34 +1017,65 @@ async function findDomTargets(page) {
         rect.height >= 8;
     };
 
-    const controls = [...document.querySelectorAll('button,[role="button"],a,input[type="button"],input[type="submit"]')];
+    const W = window.innerWidth, H = window.innerHeight;
+    // Tappable coins only spawn inside the central play area; restrict to it so we
+    // never click chrome (nav, CLOSE button, amount controls, side panels).
+    const inPlay = (cx, cy) => cx > W * 0.24 && cx < W * 0.82 && cy > H * 0.10 && cy < H * 0.76;
     const targets = [];
     const avoid = [];
-    for (const el of controls) {
-      if (!visible(el)) continue;
-      const text = normalize(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || el.getAttribute('title'));
-      if (!text) continue;
-      const rect = el.getBoundingClientRect();
+    const seen = new Set();
+    const push = (el, kind, label) => {
+      const clickEl = el.closest('button,[role="button"],a') || el;
+      if (seen.has(clickEl) || !visible(clickEl)) return;
+      const rect = clickEl.getBoundingClientRect();
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      if (rect.width < 12 || rect.height < 12 || rect.width > 220 || rect.height > 220) return;
+      if (!inPlay(cx, cy)) return;
+      seen.add(clickEl);
       const item = {
-        x: Math.round(rect.x + rect.width / 2),
-        y: Math.round(rect.y + rect.height / 2),
+        x: Math.round(cx),
+        y: Math.round(cy),
         width: Math.round(rect.width),
         height: Math.round(rect.height),
         score: 1,
-        template: text,
+        template: label,
         source: 'dom'
       };
-      if (avoidNeedles.some((needle) => text.includes(needle))) {
-        avoid.push(item);
-        continue;
-      }
-      const isTapTarget = text === 'tap' || text.startsWith('tap ') || text.includes(' tap ');
-      if ((anyTap && isTapTarget) || targetNeedles.some((needle) => text.includes(needle))) {
-        targets.push(item);
+      (kind === 'avoid' ? avoid : targets).push(item);
+    };
+
+    // Class-based coin/asteroid tap targets (and optional hazard class). Selecting
+    // by class attribute lets the browser return only matching nodes, so the cost
+    // is proportional to the handful of on-screen coins, not the whole DOM.
+    const classSelector = (needles) => needles.map((needle) => `[class*="${needle}" i]`).join(',');
+    const avoidSelector = avoidClassNeedles.length ? classSelector(avoidClassNeedles) : '';
+    const coinSelector = coinNeedles.length ? classSelector(coinNeedles) : '';
+    if (avoidSelector) {
+      for (const el of document.querySelectorAll(avoidSelector)) push(el, 'avoid', 'coin-hazard');
+    }
+    if (coinSelector) {
+      for (const el of document.querySelectorAll(coinSelector)) push(el, 'target', 'coin');
+    }
+
+    // Optional legacy text-based targets (only when --target-text is supplied).
+    if (targetNeedles.length) {
+      for (const el of document.querySelectorAll('button,[role="button"],a')) {
+        if (!visible(el)) continue;
+        const text = normalize(el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title'));
+        if (!text) continue;
+        if (avoidNeedles.some((needle) => text.includes(needle))) {
+          push(el, 'avoid', text);
+          continue;
+        }
+        if (targetNeedles.some((needle) => text.includes(needle))) {
+          push(el, 'target', text);
+        }
       }
     }
+
     return { targets, avoid };
-  }, { targetAnyTap, targetTexts, avoidTexts });
+  }, { coinNeedles: coinClassNeedles, avoidClassNeedles, targetTexts, avoidTexts });
 }
 
 async function clickDomTargetsFast(page, recent, limit) {
@@ -1117,7 +1083,7 @@ async function clickDomTargetsFast(page, recent, limit) {
     return { targets: [], avoid: [], source: 'dom-fast' };
   }
 
-  return page.evaluate(({ targetAnyTap: anyTap, targetTexts: targetNeedles, avoidTexts: avoidNeedles, recentTargets, limit, dryRun }) => {
+  return page.evaluate(({ coinNeedles, avoidClassNeedles, targetTexts: targetNeedles, avoidTexts: avoidNeedles, recentTargets, limit, dryRun }) => {
     const normalize = (value) => (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const visible = (el) => {
       const style = window.getComputedStyle(el);
@@ -1131,65 +1097,104 @@ async function clickDomTargetsFast(page, recent, limit) {
     const overlapsRecent = (item) => recentTargets.some((seen) => {
       const dx = item.x - seen.x;
       const dy = item.y - seen.y;
-      const radius = Math.max(8, Math.min(14, Math.max(item.width, item.height) * 0.35));
+      const radius = Math.max(18, Math.min(60, Math.max(item.width, item.height) * 0.45));
       return Math.sqrt(dx * dx + dy * dy) <= radius;
     });
 
-    const controls = [...document.querySelectorAll('button,[role="button"],a,input[type="button"],input[type="submit"]')];
+    const W = window.innerWidth, H = window.innerHeight;
+    const inPlay = (cx, cy) => cx > W * 0.24 && cx < W * 0.82 && cy > H * 0.10 && cy < H * 0.76;
     const targets = [];
     const avoid = [];
-    const seenElements = new Set();
-    for (const el of controls) {
-      if (seenElements.has(el) || !visible(el)) continue;
-      seenElements.add(el);
-      const text = normalize(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || el.getAttribute('title'));
-      if (!text) continue;
-      const rect = el.getBoundingClientRect();
+    const seen = new Set();
+    const consider = (el, kind, label) => {
+      const clickEl = el.closest('button,[role="button"],a') || el;
+      if (seen.has(clickEl) || !visible(clickEl)) return;
+      const rect = clickEl.getBoundingClientRect();
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      if (rect.width < 12 || rect.height < 12 || rect.width > 220 || rect.height > 220) return;
+      if (!inPlay(cx, cy)) return;
+      seen.add(clickEl);
       const item = {
-        x: Math.round(rect.x + rect.width / 2),
-        y: Math.round(rect.y + rect.height / 2),
+        x: Math.round(cx),
+        y: Math.round(cy),
         width: Math.round(rect.width),
         height: Math.round(rect.height),
         score: 1,
-        template: text,
+        template: label,
         source: 'dom-fast'
       };
-      if (avoidNeedles.some((needle) => text.includes(needle))) {
+      if (kind === 'avoid') {
         avoid.push(item);
-        continue;
+        return;
       }
-      const isTapTarget = text === 'tap' || text.startsWith('tap ') || text.includes(' tap ');
-      if (((anyTap && isTapTarget) || targetNeedles.some((needle) => text.includes(needle))) && !overlapsRecent(item)) {
-        targets.push({ el, item });
+      if (!overlapsRecent(item)) {
+        targets.push({ el: clickEl, item });
+      }
+    };
+
+    const classSelector = (needles) => needles.map((needle) => `[class*="${needle}" i]`).join(',');
+    const avoidSelector = avoidClassNeedles.length ? classSelector(avoidClassNeedles) : '';
+    const coinSelector = coinNeedles.length ? classSelector(coinNeedles) : '';
+    if (avoidSelector) {
+      for (const el of document.querySelectorAll(avoidSelector)) consider(el, 'avoid', 'coin-hazard');
+    }
+    if (coinSelector) {
+      for (const el of document.querySelectorAll(coinSelector)) consider(el, 'target', 'coin');
+    }
+
+    if (targetNeedles.length) {
+      for (const el of document.querySelectorAll('button,[role="button"],a')) {
+        if (!visible(el)) continue;
+        const text = normalize(el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title'));
+        if (!text) continue;
+        if (avoidNeedles.some((needle) => text.includes(needle))) {
+          consider(el, 'avoid', text);
+          continue;
+        }
+        if (targetNeedles.some((needle) => text.includes(needle))) {
+          consider(el, 'target', text);
+        }
       }
     }
+
+    // The coins react to pointer/mouse-down, not a bare click(), so dispatch the
+    // full pointer+mouse sequence at the element's live centre (it keeps moving).
+    const fireTap = (el) => {
+      const rect = el.getBoundingClientRect();
+      const x = rect.x + rect.width / 2;
+      const y = rect.y + rect.height / 2;
+      const target = document.elementFromPoint(x, y) || el;
+      const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 };
+      const ptr = { ...opts, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+      try {
+        target.dispatchEvent(new PointerEvent('pointerover', ptr));
+        target.dispatchEvent(new PointerEvent('pointerenter', ptr));
+        target.dispatchEvent(new PointerEvent('pointerdown', ptr));
+        target.dispatchEvent(new MouseEvent('mousedown', opts));
+        target.dispatchEvent(new PointerEvent('pointerup', ptr));
+        target.dispatchEvent(new MouseEvent('mouseup', opts));
+        target.dispatchEvent(new MouseEvent('click', opts));
+      } catch {
+        try { el.click(); } catch {}
+      }
+    };
 
     const clicked = [];
     for (const { el, item } of targets.slice(0, limit)) {
       clicked.push(item);
       if (!dryRun) {
-        try {
-          el.click();
-        } catch {
-          const rect = el.getBoundingClientRect();
-          const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) || el;
-          target.dispatchEvent(new MouseEvent('click', {
-            bubbles: true,
-            cancelable: true,
-            view: window,
-            clientX: rect.x + rect.width / 2,
-            clientY: rect.y + rect.height / 2
-          }));
-        }
+        fireTap(el);
       }
     }
 
     return { targets: clicked, avoid, source: 'dom-fast' };
   }, {
-    targetAnyTap,
+    coinNeedles: coinClassNeedles,
+    avoidClassNeedles,
     targetTexts,
     avoidTexts,
-    recentTargets: recent.map((target) => ({ x: target.x, y: target.y, width: target.width || 12, height: target.height || 12 })),
+    recentTargets: recent.map((target) => ({ x: target.x, y: target.y, width: target.width || 24, height: target.height || 24 })),
     limit,
     dryRun
   });
@@ -1273,19 +1278,23 @@ async function watchManualRounds(page) {
   let lastScreenMode = '';
   let currentSide = '-';
   let activeStartedAt = null;
-  let autoClosedForProfit = false;
-  let lastProfitCheckAt = 0;
-  let lastProfitPct = null;
+  let lastInstallAt = 0;
   const recent = [];
 
   await installOverlay(page);
   await installManualHotkeys(page);
   await updateOverlay(page, { clicks, plays, elapsedSec: 0, status: 'Manual UP/DOWN', side: currentSide });
-  console.log(`Manual mode: click UP/DOWN yourself. The bot will keep clicking safe Tap targets ${manualUnlimited ? 'without a click limit' : `up to ${maxClicks}`} and will not close the position or browser except for the profit rule.`);
+  console.log(`Manual mode: press Z/X to open UP/DOWN yourself. The bot will keep tapping coins/asteroids ${manualUnlimited ? 'without a tap limit' : `up to ${maxClicks}`} during the active round. It never closes the position automatically; press C or Space to close.`);
 
   while (true) {
-    await installOverlay(page).catch(() => {});
-    await installManualHotkeys(page).catch(() => {});
+    // The overlay and hotkeys persist once installed, so re-assert them only
+    // about once a second (enough to recover after a page refresh) instead of on
+    // every iteration.
+    if (Date.now() - lastInstallAt >= 1000) {
+      lastInstallAt = Date.now();
+      await installOverlay(page).catch(() => {});
+      await installManualHotkeys(page).catch(() => {});
+    }
     const screenState = await getManualScreenState(page);
     const active = screenState.active;
     const readyStatus = screenState.mode === 'modal-ready'
@@ -1298,9 +1307,6 @@ async function watchManualRounds(page) {
       plays += 1;
       clicks = 0;
       capped = false;
-      autoClosedForProfit = false;
-      lastProfitCheckAt = 0;
-      lastProfitPct = null;
       currentSide = screenState.side || currentSide;
       activeStartedAt = Date.now();
       recent.length = 0;
@@ -1310,9 +1316,6 @@ async function watchManualRounds(page) {
       console.log(`Manual play ${plays}: round no longer active. Final clicks=${formatManualClicks(clicks)}.`);
       clicks = 0;
       capped = false;
-      autoClosedForProfit = false;
-      lastProfitCheckAt = 0;
-      lastProfitPct = null;
       currentSide = '-';
       activeStartedAt = null;
       recent.length = 0;
@@ -1373,37 +1376,13 @@ async function watchManualRounds(page) {
     }
 
     const now = Date.now();
-    if (autoCloseProfit && !autoClosedForProfit && now - lastProfitCheckAt >= profitCheckMs) {
-      lastProfitCheckAt = now;
-      const profit = await detectCurrentProfitPercent(page);
-      lastProfitPct = profit?.pct ?? lastProfitPct;
-      if (elapsedSec >= autoCloseAfterSec && profit?.pct >= autoCloseProfitPct) {
-        autoClosedForProfit = true;
-        console.log(`Manual play ${plays}: ${elapsedSec.toFixed(1)}s elapsed and profit +${profit.pct}% reached; clicking CLOSE. Source text="${profit.text}"`);
-        await updateOverlay(page, {
-          clicks,
-          plays,
-          elapsedSec,
-          status: `${Math.floor(elapsedSec)}s +${profit.pct}%. Closing`,
-          side: currentSide
-        });
-        if (!dryRun) {
-          await clickClosePosition(page);
-        }
-        await page.waitForTimeout(closeWaitMs);
-        continue;
-      }
-    }
 
     if (!manualUnlimited && clicks >= maxClicks) {
       if (!capped) {
         capped = true;
         console.log(`Manual play ${plays}: reached ${maxClicks}/${maxClicks}. CLOSE is manual.`);
       }
-      const status = lastProfitPct === null
-        ? 'Limit reached. CLOSE manually'
-        : `Limit reached. Profit +${lastProfitPct}%`;
-      await updateOverlay(page, { clicks, plays, elapsedSec, status, side: currentSide });
+      await updateOverlay(page, { clicks, plays, elapsedSec, status: 'Limit reached. CLOSE manually', side: currentSide });
       await page.waitForTimeout(150);
       continue;
     }
@@ -1458,17 +1437,11 @@ async function watchManualRounds(page) {
     }
 
     if (now - lastLog > 2500) {
-      const profitPart = lastProfitPct === null ? '' : `, profit=+${lastProfitPct}%`;
-      console.log(`Manual play ${plays}: scanning... clicks=${formatManualClicks(clicks)}, avoid=${avoidMatches.length}${profitPart}`);
+      console.log(`Manual play ${plays}: scanning... clicks=${formatManualClicks(clicks)}, avoid=${avoidMatches.length}`);
       lastLog = now;
     }
 
-    const activeStatus = lastProfitPct === null
-      ? `Active ${Math.floor(elapsedSec)}s`
-      : elapsedSec < autoCloseAfterSec
-        ? `Active ${Math.floor(elapsedSec)}s +${lastProfitPct}%`
-        : `Active +${lastProfitPct}%`;
-    await updateOverlay(page, { clicks, plays, elapsedSec, status: activeStatus, side: currentSide });
+    await updateOverlay(page, { clicks, plays, elapsedSec, status: `Active ${Math.floor(elapsedSec)}s`, side: currentSide });
     await page.waitForTimeout(intervalMs);
   }
 }
